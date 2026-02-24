@@ -1,4 +1,4 @@
-function SkfFormatFrameGeneric(frame, anim, isReverse, isLoop) {
+function SkfGenericFormatFrame(frame, anim, isReverse, isLoop) {
   const lastFrame = anim.keyframes[anim.keyframes.length - 1].frame
   if (isLoop) {
     frame %= lastFrame + 1
@@ -11,11 +11,11 @@ function SkfFormatFrameGeneric(frame, anim, isReverse, isLoop) {
   return frame
 }
 
-function SkfTimeFrameGeneric(time, anim, isReverse, isLoop) {
+function SkfGenericTimeFrame(time, anim, isReverse, isLoop) {
   const elapsed = time / 1000
   const frametime = 1 / anim.fps
   const frame = elapsed / frametime
-  return SkfFormatFrameGeneric(frame, anim, isReverse, isLoop)
+  return SkfGenericFormatFrame(frame, anim, isReverse, isLoop)
 }
 
 function rotate(point, rot) {
@@ -165,9 +165,8 @@ function inverseKinematics(bones, ikRootIds) {
   return ikRots
 }
 
-function getTexFromStyle(texName, styles) {
-  let finalTex = false
-
+function SkfGenericGetBoneTexture(texName, styles) {
+  finalTex = false
   styles.forEach(style => {
     style.textures.forEach(tex => {
       if (texName == tex.name && !finalTex) {
@@ -175,11 +174,10 @@ function getTexFromStyle(texName, styles) {
       }
     })
   })
-
   return finalTex
 }
 
-function SkfAnimateGeneric(bones, anims, frames, smoothFrames) {
+function SkfGenericAnimate(bones, anims, frames, smoothFrames) {
   anims.forEach((anim, a) => {
     bones.forEach(bone => {
       bone.pos.x = interpolateKeyframes(bone.id, bone.pos.x, anim.keyframes, "PositionX", frames[a], smoothFrames[a])
@@ -288,7 +286,7 @@ function inheritance(bones, ikRots) {
   return bones
 }
 
-function SkfConstructGeneric(rawBones, ikRootIds) {
+function SkfGenericConstruct(rawBones, ikRootIds) {
   const inhBones = inheritance(structuredClone(rawBones), [])
   const ikRots = inverseKinematics(structuredClone(inhBones), ikRootIds)
   let finalBones = inheritance(structuredClone(rawBones), ikRots)
