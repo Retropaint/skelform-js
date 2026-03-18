@@ -301,6 +301,7 @@ function constructVerts(bones) {
     }
 
     for (vert of bones[b].vertices) {
+      vert.pos = vert.init_pos
       vert.pos = inheritVert(vert.init_pos, bones[b])
     }
 
