@@ -300,10 +300,10 @@ function constructVerts(bones) {
       return
     }
 
-    for (vert of bones[b].vertices) {
-      vert.pos = vert.init_pos
-      vert.pos = inheritVert(vert.init_pos, bones[b])
-    }
+    bones[b].vertices.forEach((vert, v) => {
+      bones[b].vertices[v].pos = vert.init_pos;
+      bones[b].vertices[v].pos = inheritVert(vert.pos, bones[b]);
+    })
 
     bones[b].binds.forEach((bind, bi) => {
       if (bind.bone_id == -1) {
@@ -313,7 +313,12 @@ function constructVerts(bones) {
       const bindBone = bones.find((b) => b.id == bind.bone_id);
 
       for (bind_vert of bones[b].binds[bi].verts) {
-        if (!bind.is_path) { continue }
+        if (!bind.is_path) {
+          let vert = bones[b].vertices[bind_vert.id];
+          endPos = subv2(inheritVert(vert.init_pos, bindBone), vert.pos);
+          vert.pos = addv2(vert.pos, mulv2f(endPos, bind_vert.weight));
+          continue;
+        }
 
         const prev = bi > 0 ? bi - 1 : bi
         const next = bi + 1 <= bones[b].binds.length - 1 ? bi + 1 : bones[b].binds.length - 1
