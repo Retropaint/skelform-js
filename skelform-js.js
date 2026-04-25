@@ -273,15 +273,44 @@ function SkfGenericAnimate(bones, anims, frames, smoothFrames) {
   }
 }
 
-function interpolate(current, max, startVal, endVal) {
-  if (max == 0 || current >= max) {
-    return endVal
+function interpolate(current, max, startVal, endVal, startHandle, endHandle) {
+  // snapping behavior for None transition preset
+  if (startHandle.y == 999. && endHandle.y == 999.) {
+    return startVal;
   }
-  const interp = current / max
-  const end = endVal - startVal
-  const result = startVal + (end * interp)
+  if (max == 0 || current >= max) {
+    return endVal;
+  }
 
-  return result
+  // solve for time (x axis) with Newton-Raphson
+  let initial = current / max;
+  let t = initial;
+  for (let i = 0; i < 5; i++) {
+    let x = cubic_bezier(t, startHandle.x, endHandle.x);
+    let dx = cubic_bezier_derivative(t, startHandle.x, endHandle.x);
+    if (Math.abs(dx) < 1e-5) {
+      break;
+    }
+    t -= (x - initial) / dx;
+    if (t > 1) {
+      t = 1;
+    } else if (t < 0) {
+      t = 0
+    }
+  }
+
+  let progress = cubic_bezier(t, startHandle.y, endHandle.y);
+  return startVal + (endVal - startVal) * progress
+}
+
+function cubic_bezier(t, p1, p2) {
+  let u = 1. - t;
+  return 3. * u * u * t * p1 + 3. * u * t * t * p2 + t * t * t
+}
+
+function cubic_bezier_derivative(t, p1, p2) {
+  let u = 1. - t;
+  return 3. * u * u * p1 + 6. * u * t * (p2 - p1) + 3. * t * t * (1. - p2);
 }
 
 function _skfBinarySearchKeyframes(keyframes, frame) {
@@ -301,8 +330,8 @@ function _skfBinarySearchKeyframes(keyframes, frame) {
 function interpolateKeyframes(field, prevKf, nextKf, frame, smoothFrame) {
   const totalFrames = nextKf.frame - prevKf.frame
   const currentFrame = frame - prevKf.frame
-  const result = interpolate(currentFrame, totalFrames, prevKf.value, nextKf.value)
-  return interpolate(currentFrame, smoothFrame, field, result)
+  const result = interpolate(currentFrame, totalFrames, prevKf.value, nextKf.value, nextKf.start_handle, nextKf.end_handle)
+  return interpolate(currentFrame, smoothFrame, field, result, { x: 0, y: 0 }, { x: 0, y: 0 })
 }
 
 function resetInheritance(cachedBones, ogBones) {
