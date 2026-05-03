@@ -11,19 +11,6 @@ function SkfGenericFormatFrame(frame, anim, isReverse, isLoop) {
   return Math.round(frame)
 }
 
-/* temporary backport of v0.4.2 field.
-   SkfGenericAnimate() uses this, so this is mandatory */
-function SkfInitNextKf(anims) {
-  for (anim of anims) {
-    anim.keyframes.forEach((kf, k) => {
-      anim.keyframes[k].next_kf =
-        anim.keyframes.findIndex((okf) =>
-          okf.bone_id == kf.bone_id && okf.element == kf.element && okf.frame > kf.frame
-        );
-    })
-  }
-}
-
 function SkfGenericTimeFrame(time, anim, isReverse, isLoop) {
   const elapsed = time / 1000
   const frametime = 1 / anim.fps
@@ -343,27 +330,149 @@ function resetInheritance(cachedBones, ogBones) {
   }
 }
 
-function inheritance(bones, ikRots) {
+function inheritance(bones, ikRots, armature_bones) {
   for (let b = 0; b < bones.length; b++) {
     if (bones[b].parent_id == -1) {
       continue;
     }
     const parent = bones[bones[b].parent_id]
 
-    bones[b].rot += parent.rot
+    let orbit_rot = parent.rot;
+    // apply orbital difference, if rotation resistance physics is active
+    if (armature_bones && armature_bones[b].phys_sway > 0) {
+      orbit_rot -= armature_bones[b].phys_global_orbit_diff;
+    }
+
+    bones[b].rot += orbit_rot
+
     bones[b].scale = mulv2(bones[b].scale, parent.scale)
     bones[b].pos = mulv2(bones[b].pos, parent.scale)
     /* rotate child around parent as if it were orbitting */
-    bones[b].pos = rotate(bones[b].pos, parent.rot)
+    bones[b].pos = rotate(bones[b].pos, orbit_rot)
     bones[b].pos = addv2(bones[b].pos, parent.pos)
 
     if (ikRots[bones[b].id]) {
       bones[b].rot = ikRots[bones[b].id]
     }
+
+    if (armature_bones) {
+      if (armature_bones[b].phys_rot_damping > 0) {
+        bones[b].rot = armature_bones[b].phys_global_rot;
+      }
+      if (armature_bones[b].phys_pos_damping > 0) {
+        bones[b].pos = armature_bones[b].phys_global_pos;
+      }
+      if (armature_bones[b].phys_scale_damping > 0) {
+        bones[b].scale = armature_bones[b].phys_global_scale;
+      }
+    }
   }
 
   return bones
 }
+
+function shortest_angle_delta(from, to) {
+  let pi = 3.141592653589793;
+  let tau = pi * 2.0;
+  let delta = to - from
+  while (delta > pi) {
+    delta -= tau;
+  }
+  while (delta < -pi) {
+    delta += tau;
+  }
+  return delta
+}
+
+function simulate_physics(armature_bones, constructed_bones) {
+  for (let b = 0; b < armature_bones.length; b++) {
+    s = { x: 0.3, y: 0.3 }
+    e = { x: 0.6, y: 0.6 }
+    arm_bone = armature_bones[b]
+    const_bone = constructed_bones[b]
+    if (!arm_bone.phys_global_pos) {
+      arm_bone.phys_global_pos = { x: 0, y: 0 }
+    }
+    if (!arm_bone.phys_global_orbit) {
+      arm_bone.phys_global_orbit = 0
+      arm_bone.phys_global_orbit_vel = 0
+    }
+    prev_pos = { x: arm_bone.phys_global_pos.x, y: arm_bone.phys_global_pos.y }
+
+    // interpolate position
+    if (arm_bone.phys_pos_damping || arm_bone.phys_sway) {
+      phys_pos = arm_bone.phys_global_pos
+      if (!arm_bone.phys_pos_damping) {
+        arm_bone.phys_pos_damping = 0
+      }
+      damping = { x: arm_bone.phys_pos_damping, y: arm_bone.phys_pos_damping }
+
+      // ratio
+      if (arm_bone.phys_pos_rato) {
+        if (arm_bone.phys_pos_ratio < 0.0) {
+          damping.y *= 1.0 - Math.abs(arm_bone.phys_pos_ratio)
+        } else if (arm_bone.phys_pos_ratio > 0.0) {
+          damping.x *= 1.0 - arm_bone.phys_pos_ratio
+        }
+      }
+
+      arm_bone.phys_global_pos = {
+        x: interpolate(2.0, damping.x, phys_pos.x, const_bone.pos.x, s, e),
+        y: interpolate(2.0, damping.y, phys_pos.y, const_bone.pos.y, s, e),
+      }
+    }
+
+    // interpolate scale
+    if (arm_bone.phys_scale_damping) {
+      phys_scale = arm_bone.phys_global_scale
+      damping = { x: arm_bone.phys_scale_damping, y: arm_bone.phys_scale_damping }
+
+      // ratio
+      if (arm_bone.phys_scale_ratio) {
+        damping.y *= 1.0 - Math.abs(arm_bone.phys_scale_ratio)
+      }
+      else if (arm_bone.phys_scale_ratio) {
+        damping.x *= 1.0 - arm_bone.phys_scale_ratio
+      }
+
+      phys_scale.x = interpolate(2.0, damping.x, phys_scale.x, const_bone.scale.x, s, e)
+      phys_scale.y = interpolate(2.0, damping.y, phys_scale.y, const_bone.scale.y, s, e)
+    }
+
+    // interpolate rotation
+    if (arm_bone.phys_rot_damping) {
+      rot = shortest_angle_delta(arm_bone.phys_global_rot, const_bone.rot)
+      arm_bone.phys_global_rot += rot / arm_bone.phys_rot_damping
+    }
+
+    parent = constructed_bones.find((b) => b.id == const_bone.parent_id);
+    if (arm_bone.phys_sway && parent) {
+      // interpolate to the angle difference between bone and parent
+      diff = normalize(subv2(const_bone.pos, parent.pos))
+      diff_angle = Math.atan2(diff.y, diff.x)
+      rest_rot = shortest_angle_delta(arm_bone.phys_global_orbit, diff_angle)
+
+      // apply bounce
+      if (arm_bone.phys_rot_bounce && arm_bone.phys_rot_bounce <= 1) {
+        bounce = arm_bone.phys_rot_bounce
+        rest_rot += arm_bone.phys_global_orbit_vel / (2.0 - bounce)
+        arm_bone.phys_global_orbit_vel = rest_rot
+      }
+      arm_bone.phys_global_orbit += rest_rot / 10.0
+
+      // swing orbit based on position momentum
+      vel = normalize(subv2(arm_bone.phys_global_pos, prev_pos))
+      angle = Math.atan2(-vel.y, -vel.x)
+      vel_rot = shortest_angle_delta(arm_bone.phys_global_orbit, angle)
+      strength = magnitude(subv2(arm_bone.phys_global_pos, prev_pos)) / 1000
+      arm_bone.phys_global_orbit += vel_rot * strength * arm_bone.phys_sway
+
+      // apply difference in final angle and orbit
+      arm_bone.phys_global_orbit_diff = diff_angle - arm_bone.phys_global_orbit
+    }
+  }
+}
+
 
 function SkfGenericConstruct(rawBones, ikRootIds, cachedBones) {
   if (!cachedBones) {
@@ -375,10 +484,16 @@ function SkfGenericConstruct(rawBones, ikRootIds, cachedBones) {
   resetInheritance(cachedBones, rawBones);
   inheritance(cachedBones, [])
 
-  ikRots = inverseKinematics(cachedBones, ikRootIds)
+  let ikRots = {}
+  if (ikRootIds) {
+    ikRots = inverseKinematics(cachedBones, ikRootIds)
+    resetInheritance(cachedBones, rawBones);
+    inheritance(cachedBones, ikRots)
+  }
 
+  simulate_physics(rawBones, cachedBones)
   resetInheritance(cachedBones, rawBones);
-  inheritance(cachedBones, ikRots)
+  inheritance(cachedBones, ikRots, rawBones)
 
   constructVerts(cachedBones)
 
