@@ -126,55 +126,55 @@ function arcIk(bones, ikRootIds, root, target) {
   }
 }
 
-function inverseKinematics(bones, ikRootIds) {
+function inverseKinematics(bones, inverse_kinematics) {
   let ikRots = []
-  for (let i = 0; i < ikRootIds.length; i++) {
-    family = bones[ikRootIds[i]]
+  for (let i = 0; i < inverse_kinematics.length; i++) {
+    family = inverse_kinematics[i]
 
-    const root = { x: family.pos.x, y: family.pos.y };
-    const target = { x: bones[family.ik_target_id].pos.x, y: bones[family.ik_target_id].pos.y };
+    const root = { x: bones[family.bone_ids[0]].pos.x, y: bones[family.bone_ids[0]].pos.y };
+    const target = { x: bones[family.target_id].pos.x, y: bones[family.target_id].pos.y };
 
     // run the appropriate IK mode
-    if (family.ik_mode == "FABRIK") {
+    if (family.mode == "FABRIK") {
       for (f = 0; f < 10; f++) {
-        fabrik(bones, family.ik_bone_ids, root, target)
+        fabrik(bones, family.bone_ids, root, target)
       }
     } else {
-      arcIk(bones, family.ik_bone_ids, root, target)
+      arcIk(bones, family.bone_ids, root, target)
     }
 
     // the IK modes above only change bone position; now rotate the bones such that they point to the next one
-    const endBone = bones[family.ik_bone_ids[family.ik_bone_ids.length - 1]]
+    const endBone = bones[family.bone_ids[family.bone_ids.length - 1]]
     let tipPos = { x: endBone.pos.x, y: endBone.pos.y };
-    for (let b = 0; b < family.ik_bone_ids.length; b++) {
+    for (let b = 0; b < family.bone_ids.length; b++) {
       if (b == 0) {
         continue
       }
-      let bid = family.ik_bone_ids[family.ik_bone_ids.length - 1 - b];
+      let bid = family.bone_ids[family.bone_ids.length - 1 - b];
       const dir = subv2(tipPos, bones[bid].pos)
       bones[bid].rot = Math.atan2(dir.y, dir.x)
       tipPos = { x: bones[bid].pos.x, y: bones[bid].pos.y };
     }
 
     // apply constraints, if appropriate
-    const jointDir = normalize(subv2(bones[family.ik_bone_ids[1]].pos, root))
+    const jointDir = normalize(subv2(bones[family.bone_ids[1]].pos, root))
     const baseDir = normalize(subv2(target, root))
     const dir = jointDir.x * baseDir.y - baseDir.x * jointDir.y;
     const baseAngle = Math.atan2(baseDir.y, baseDir.x)
-    const cw = family.ik_constraint == "Clockwise" && dir > 0.;
-    const ccw = family.ik_constraint == "CounterClockwise" && dir < 0.;
+    const cw = family.constraint == "Clockwise" && dir > 0.;
+    const ccw = family.constraint == "CounterClockwise" && dir < 0.;
     if (cw || ccw) {
-      for (id of family.ik_bone_ids) {
+      for (id of family.bone_ids) {
         bones[id].rot = -bones[id].rot + baseAngle * 2;
       }
     }
 
     /* save rots to hash */
-    for (let b = 0; b < family.ik_bone_ids.length; b++) {
-      if (b == family.ik_bone_ids.length - 1) {
+    for (let b = 0; b < family.bone_ids.length; b++) {
+      if (b == family.bone_ids.length - 1) {
         continue
       }
-      ikRots[bones[family.ik_bone_ids[b]].id] = bones[family.ik_bone_ids[b]].rot
+      ikRots[bones[family.bone_ids[b]].id] = bones[family.bone_ids[b]].rot
     }
   }
 
@@ -330,17 +330,19 @@ function resetInheritance(cachedBones, ogBones) {
   }
 }
 
-function inheritance(bones, ikRots, armature_bones) {
+function inheritance(bones, ikRots, physics) {
   for (let b = 0; b < bones.length; b++) {
     if (bones[b].parent_id == -1) {
       continue;
     }
     const parent = bones[bones[b].parent_id]
 
+    let phys = physics[bones[b].physics_id];
+
     let orbit_rot = parent.rot;
     // apply orbital difference, if rotation resistance physics is active
-    if (armature_bones && armature_bones[b].phys_sway > 0) {
-      orbit_rot -= armature_bones[b].phys_global_orbit_diff;
+    if (phys && phys.sway > 0) {
+      orbit_rot -= phys.global_orbit_diff;
     }
 
     bones[b].rot += orbit_rot
@@ -355,15 +357,15 @@ function inheritance(bones, ikRots, armature_bones) {
       bones[b].rot = ikRots[bones[b].id]
     }
 
-    if (armature_bones) {
-      if (armature_bones[b].phys_rot_damping > 0) {
-        bones[b].rot = armature_bones[b].phys_global_rot;
+    if (phys) {
+      if (phys.rot_damping > 0) {
+        bones[b].rot = phys.global_rot;
       }
-      if (armature_bones[b].phys_pos_damping > 0) {
-        bones[b].pos = armature_bones[b].phys_global_pos;
+      if (phys.pos_damping > 0) {
+        bones[b].pos = phys.global_pos;
       }
-      if (armature_bones[b].phys_scale_damping > 0) {
-        bones[b].scale = armature_bones[b].phys_global_scale;
+      if (phys.scale_damping > 0) {
+        bones[b].scale = phys.global_scale;
       }
     }
   }
@@ -384,55 +386,59 @@ function shortest_angle_delta(from, to) {
   return delta
 }
 
-function simulate_physics(armature_bones, constructed_bones) {
-  for (let b = 0; b < armature_bones.length; b++) {
+function simulate_physics(constructed_bones, physics) {
+  for (let b = 0; b < constructed_bones.length; b++) {
+    let const_bone = constructed_bones[b]
+    if (const_bone.physics_id == -1) {
+      continue;
+    }
+    let phys = physics[const_bone.physics_id];
+
     s = { x: 0.3, y: 0.3 }
     e = { x: 0.6, y: 0.6 }
-    arm_bone = armature_bones[b]
-    const_bone = constructed_bones[b]
-    if (!arm_bone.phys_global_pos) {
-      arm_bone.phys_global_pos = { x: 0, y: 0 }
+    if (!phys.global_pos) {
+      phys.global_pos = { x: 0, y: 0 }
     }
-    if (!arm_bone.phys_global_orbit) {
-      arm_bone.phys_global_orbit = 0
-      arm_bone.phys_global_orbit_vel = 0
+    if (!phys.global_orbit) {
+      phys.global_orbit = 0
+      phys.global_orbit_vel = 0
     }
-    prev_pos = { x: arm_bone.phys_global_pos.x, y: arm_bone.phys_global_pos.y }
+    prev_pos = { x: phys.global_pos.x, y: phys.global_pos.y }
 
     // interpolate position
-    if (arm_bone.phys_pos_damping || arm_bone.phys_sway) {
-      phys_pos = arm_bone.phys_global_pos
-      if (!arm_bone.phys_pos_damping) {
-        arm_bone.phys_pos_damping = 0
+    if (phys.pos_damping || phys.sway) {
+      phys_pos = phys.global_pos
+      if (!phys.pos_damping) {
+        phys.pos_damping = 0
       }
-      damping = { x: arm_bone.phys_pos_damping, y: arm_bone.phys_pos_damping }
+      damping = { x: phys.pos_damping, y: phys.pos_damping }
 
       // ratio
-      if (arm_bone.phys_pos_rato) {
-        if (arm_bone.phys_pos_ratio < 0.0) {
-          damping.y *= 1.0 - Math.abs(arm_bone.phys_pos_ratio)
-        } else if (arm_bone.phys_pos_ratio > 0.0) {
-          damping.x *= 1.0 - arm_bone.phys_pos_ratio
+      if (phys.pos_rato) {
+        if (phys.pos_ratio < 0.0) {
+          damping.y *= 1.0 - Math.abs(phys.pos_ratio)
+        } else if (phys.pos_ratio > 0.0) {
+          damping.x *= 1.0 - phys.pos_ratio
         }
       }
 
-      arm_bone.phys_global_pos = {
+      phys.global_pos = {
         x: interpolate(2.0, damping.x, phys_pos.x, const_bone.pos.x, s, e),
         y: interpolate(2.0, damping.y, phys_pos.y, const_bone.pos.y, s, e),
       }
     }
 
     // interpolate scale
-    if (arm_bone.phys_scale_damping) {
-      phys_scale = arm_bone.phys_global_scale
-      damping = { x: arm_bone.phys_scale_damping, y: arm_bone.phys_scale_damping }
+    if (phys.scale_damping) {
+      phys_scale = phys.global_scale
+      damping = { x: phys.scale_damping, y: phys.scale_damping }
 
       // ratio
-      if (arm_bone.phys_scale_ratio) {
-        damping.y *= 1.0 - Math.abs(arm_bone.phys_scale_ratio)
+      if (phys.scale_ratio) {
+        damping.y *= 1.0 - Math.abs(phys.scale_ratio)
       }
-      else if (arm_bone.phys_scale_ratio) {
-        damping.x *= 1.0 - arm_bone.phys_scale_ratio
+      else if (phys.scale_ratio) {
+        damping.x *= 1.0 - phys.scale_ratio
       }
 
       phys_scale.x = interpolate(2.0, damping.x, phys_scale.x, const_bone.scale.x, s, e)
@@ -440,97 +446,110 @@ function simulate_physics(armature_bones, constructed_bones) {
     }
 
     // interpolate rotation
-    if (arm_bone.phys_rot_damping) {
-      rot = shortest_angle_delta(arm_bone.phys_global_rot, const_bone.rot)
-      arm_bone.phys_global_rot += rot / arm_bone.phys_rot_damping
+    if (phys.rot_damping) {
+      rot = shortest_angle_delta(phys.global_rot, const_bone.rot)
+      phys.global_rot += rot / phys.rot_damping
     }
 
     parent = constructed_bones.find((b) => b.id == const_bone.parent_id);
-    if (arm_bone.phys_sway && parent) {
+    if (phys.sway && parent) {
       // interpolate to the angle difference between bone and parent
       diff = normalize(subv2(const_bone.pos, parent.pos))
       diff_angle = Math.atan2(diff.y, diff.x)
-      rest_rot = shortest_angle_delta(arm_bone.phys_global_orbit, diff_angle)
+      rest_rot = shortest_angle_delta(phys.global_orbit, diff_angle)
 
       // apply bounce
-      if (arm_bone.phys_rot_bounce && arm_bone.phys_rot_bounce <= 1) {
-        bounce = arm_bone.phys_rot_bounce
-        rest_rot += arm_bone.phys_global_orbit_vel / (2.0 - bounce)
-        arm_bone.phys_global_orbit_vel = rest_rot
+      if (phys.rot_bounce && phys.rot_bounce <= 1) {
+        bounce = phys.rot_bounce
+        rest_rot += phys.global_orbit_vel / (2.0 - bounce)
+        phys.global_orbit_vel = rest_rot
       }
-      arm_bone.phys_global_orbit += rest_rot / 10.0
+      phys.global_orbit += rest_rot / 10.0
 
       // swing orbit based on position momentum
-      vel = normalize(subv2(arm_bone.phys_global_pos, prev_pos))
+      vel = normalize(subv2(phys.global_pos, prev_pos))
       angle = Math.atan2(-vel.y, -vel.x)
-      vel_rot = shortest_angle_delta(arm_bone.phys_global_orbit, angle)
-      strength = magnitude(subv2(arm_bone.phys_global_pos, prev_pos)) / 1000
-      arm_bone.phys_global_orbit += vel_rot * strength * arm_bone.phys_sway
+      vel_rot = shortest_angle_delta(phys.global_orbit, angle)
+      strength = magnitude(subv2(phys.global_pos, prev_pos)) / 1000
+      phys.global_orbit += vel_rot * strength * phys.sway
 
       // apply difference in final angle and orbit
-      arm_bone.phys_global_orbit_diff = diff_angle - arm_bone.phys_global_orbit
+      phys.global_orbit_diff = diff_angle - phys.global_orbit
     }
   }
 }
 
 
-function SkfGenericConstruct(rawBones, ikRootIds, cachedBones) {
-  if (!cachedBones) {
-    cachedBones = structuredClone(rawBones);
+function SkfGenericConstruct(armature) {
+  if (!armature.cachedBones) {
+    armature.cachedBones = structuredClone(armature.bones);
   } else {
-    cachedBones.sort((a, b) => (a.id > b.id) ? 1 : -1)
+    armature.cachedBones.sort((a, b) => (a.id > b.id) ? 1 : -1)
   }
 
-  resetInheritance(cachedBones, rawBones);
-  inheritance(cachedBones, [])
+  console.log(armature.bones[0].name)
 
+  // 1st inheritance pass 
+  resetInheritance(armature.cachedBones, armature.bones);
+  inheritance(armature.cachedBones, [], [])
+
+  // 2nd inheritance pass: inverse kinematics
   let ikRots = {}
-  if (ikRootIds) {
-    ikRots = inverseKinematics(cachedBones, ikRootIds)
-    resetInheritance(cachedBones, rawBones);
-    inheritance(cachedBones, ikRots)
+  if (armature.inverse_kinematics) {
+    ikRots = inverseKinematics(armature.cachedBones, armature.inverse_kinematics)
+    resetInheritance(armature.cachedBones, armature.bones);
+    inheritance(armature.cachedBones, ikRots, [])
   }
 
-  simulate_physics(rawBones, cachedBones)
-  resetInheritance(cachedBones, rawBones);
-  inheritance(cachedBones, ikRots, rawBones)
+  // 3rd inheritance pass: physics
+  if (armature.physics) {
+    simulate_physics(armature.cachedBones, armature.physics)
+    resetInheritance(armature.cachedBones, armature.bones);
+    inheritance(armature.cachedBones, ikRots, armature.physics)
+  }
 
-  constructVerts(cachedBones)
+  // mesh deformation
+  constructVerts(armature.cachedBones, armature.visuals)
 
-  return cachedBones;
+  return armature.cachedBones;
 }
 
-function constructVerts(bones) {
+function constructVerts(bones, visuals) {
   for (let b = 0; b < bones.length; b++) {
-    if (!bones[b].vertices) {
+    if (bones[b].visuals_id == -1) {
       continue;
     }
 
-    for (let v = 0; v < bones[b].vertices.length; v++) {
-      bones[b].vertices[v].pos = bones[b].vertices[v].init_pos;
-      bones[b].vertices[v].pos = inheritVert(bones[b].vertices[v].pos, bones[b]);
+    let visual = visuals[bones[b].visuals_id];
+
+    if (!visual.vertices) {
+      continue;
     }
 
-    for (let bi = 0; bi < bones[b].binds.length; bi++) {
-      if (bones[b].binds[bi].bone_id == -1) {
+    for (let v = 0; v < visual.vertices.length; v++) {
+      visual.vertices[v].pos = visual.vertices[v].init_pos;
+      visual.vertices[v].pos = inheritVert(visual.vertices[v].pos, bones[b]);
+    }
+
+    for (let bi = 0; bi < visual.binds.length; bi++) {
+      if (visual.binds[bi].bone_id == -1) {
         continue;
       }
 
-      const bindBone = bones[bones[b].binds[bi].bone_id];
+      const bindBone = bones[visual.binds[bi].bone_id];
 
-      for (bind_vert of bones[b].binds[bi].verts) {
-        if (!bones[b].binds[bi].is_path) {
-          let vert = bones[b].vertices[bind_vert.id];
+      for (bind_vert of visual.binds[bi].verts) {
+        if (!visual.binds[bi].is_path) {
+          let vert = visual.vertices[bind_vert.id];
           endPos = subv2(inheritVert(vert.init_pos, bindBone), vert.pos);
           vert.pos = addv2(vert.pos, mulv2f(endPos, bind_vert.weight));
           continue;
         }
 
         const prev = bi > 0 ? bi - 1 : bi
-        const next = bi + 1 <= bones[b].binds.length - 1 ? bi + 1 : bones[b].binds.length - 1
-        const bone = bones[b];
-        const prevBone = bones[bone.binds[prev].bone_id];
-        const nextBone = bones[bone.binds[next].bone_id];
+        const next = bi + 1 <= visual.binds.length - 1 ? bi + 1 : visual.binds.length - 1
+        const prevBone = bones[visual.binds[prev].bone_id];
+        const nextBone = bones[visual.binds[next].bone_id];
 
         const prevDir = subv2(bindBone.pos, prevBone.pos)
         const nextDir = subv2(nextBone.pos, bindBone.pos)
@@ -539,7 +558,7 @@ function constructVerts(bones) {
         const average = addv2(prevNorm, nextNorm);
         const normAngle = Math.atan2(average.y, average.x)
 
-        let vert = bones[b].vertices[bind_vert.id]
+        let vert = visual.vertices[bind_vert.id]
         vert.pos = addv2(vert.init_pos, bindBone.pos)
         let rotated = rotate(subv2(vert.pos, bindBone.pos), normAngle)
         vert.pos = addv2(bindBone.pos, mulv2f(rotated, bind_vert.weight))
