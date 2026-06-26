@@ -24,7 +24,7 @@ function copyArray(src, dst) {
   }
 }
 
-function rotate(point, rot) {
+function SkfRotateVec2(point, rot) {
   return { x: point.x * Math.cos(rot) - point.y * Math.sin(rot), y: point.x * Math.sin(rot) + point.y * Math.cos(rot), }
 }
 
@@ -121,7 +121,7 @@ function arcIk(bones, ikRootIds, root, target) {
       x: bones[ikRootIds[rid]].pos.x * valley,
       y: root.y + (1 - peak) * Math.sin(dist[rid] * 3.14) * baseMag
     }
-    const rotated = rotate(subv2(bones[ikRootIds[rid]].pos, root), baseAngle)
+    const rotated = SkfRotateVec2(subv2(bones[ikRootIds[rid]].pos, root), baseAngle)
     bones[ikRootIds[rid]].pos = addv2(rotated, root)
   }
 }
@@ -350,7 +350,7 @@ function inheritance(bones, ikRots, physics) {
     bones[b].scale = mulv2(bones[b].scale, parent.scale)
     bones[b].pos = mulv2(bones[b].pos, parent.scale)
     /* rotate child around parent as if it were orbitting */
-    bones[b].pos = rotate(bones[b].pos, orbit_rot)
+    bones[b].pos = SkfRotateVec2(bones[b].pos, orbit_rot)
     bones[b].pos = addv2(bones[b].pos, parent.pos)
 
     if (ikRots[bones[b].id]) {
@@ -528,7 +528,7 @@ function constructVerts(bones, visuals) {
 
     for (let v = 0; v < visual.vertices.length; v++) {
       visual.vertices[v].pos = visual.vertices[v].init_pos;
-      visual.vertices[v].pos = inheritVert(visual.vertices[v].pos, bones[b]);
+      visual.vertices[v].pos = inheritVert(visual.vertices[v].pos, bones[b], visual.pivot_scale, visual.pivot_rot);
     }
 
     for (let bi = 0; bi < visual.binds.length; bi++) {
@@ -541,7 +541,7 @@ function constructVerts(bones, visuals) {
       for (bind_vert of visual.binds[bi].verts) {
         if (!visual.binds[bi].is_path) {
           let vert = visual.vertices[bind_vert.id];
-          endPos = subv2(inheritVert(vert.init_pos, bindBone), vert.pos);
+          endPos = subv2(inheritVert(vert.init_pos, bindBone, visual.pivot_scale, visual.pivot_rot), vert.pos);
           vert.pos = addv2(vert.pos, mulv2f(endPos, bind_vert.weight));
           continue;
         }
@@ -560,16 +560,22 @@ function constructVerts(bones, visuals) {
 
         let vert = visual.vertices[bind_vert.id]
         vert.pos = addv2(vert.init_pos, bindBone.pos)
-        let rotated = rotate(subv2(vert.pos, bindBone.pos), normAngle)
+        let rotated = SkfRotateVec2(subv2(vert.pos, bindBone.pos), normAngle)
         vert.pos = addv2(bindBone.pos, mulv2f(rotated, bind_vert.weight))
       }
     }
   }
 }
 
-function inheritVert(pos, bone) {
-  pos = mulv2(pos, bone.scale);
-  pos = rotate(pos, bone.rot);
+function inheritVert(pos, bone, pivot_scale, pivot_rot) {
+  pos = mulv2(pos, mulv2(bone.scale, { x: pivot_scale.x, y: pivot_scale.y }));
+  pos = SkfRotateVec2(pos, bone.rot + pivot_rot);
   pos = addv2(pos, bone.pos);
   return pos
+}
+
+function SkfIsFacingLeft(scale) {
+  let both = scale.x < 0. && scale.y < 0.;
+  let either = scale.x < 0. || scale.y < 0.;
+  return either && !both
 }
