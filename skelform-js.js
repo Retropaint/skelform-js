@@ -1,3 +1,4 @@
+
 function SkfGenericFormatFrame(frame, anim, isReverse, isLoop) {
   const lastFrame = anim.keyframes[anim.keyframes.length - 1].frame
   if (isLoop) {
@@ -194,7 +195,7 @@ function SkfGenericGetBoneTexture(texName, styles) {
 
 function SkfGenericAnimate(bones, anims, frames, smoothFrames) {
   for (let a = 0; a < anims.length; a++) {
-    for (k = 0; k < anim.keyframes.length; k++) {
+    for (k = 0; k < anims[a].keyframes.length; k++) {
       let kf = anims[a].keyframes[k];
 
       // only prev keyframes are considered
@@ -212,7 +213,10 @@ function SkfGenericAnimate(bones, anims, frames, smoothFrames) {
         continue;
       }
 
-      let bone = bones[kf.bone_id];
+      let bone = bones.find(bone => bone.name == kf.bone_name);
+      if (!bone) {
+        continue;
+      }
 
       let c1 = kf.element[0];
       let c2 = kf.element[kf.element.length - 1];
@@ -244,13 +248,13 @@ function SkfGenericAnimate(bones, anims, frames, smoothFrames) {
   };
   for (const anim of anims) {
     for (const kf of anim.keyframes) {
-      let mask = animatedMap.get(kf.bone_id) || 0;
+      let mask = animatedMap.get(kf.bone_name) || 0;
       mask |= FLAGS[kf.element] || 0;
-      animatedMap.set(kf.bone_id, mask);
+      animatedMap.set(kf.bone_name, mask);
     }
   }
   for (const bone of bones) {
-    const mask = animatedMap.get(bone.id) || 0;
+    const mask = animatedMap.get(bone.name) || 0;
     if (!(mask & FLAGS.PositionX)) bone.pos.x = bone.init_pos.x;
     if (!(mask & FLAGS.PositionY)) bone.pos.y = bone.init_pos.y;
     if (!(mask & FLAGS.Rotation)) bone.rot = bone.init_rot;
@@ -486,8 +490,6 @@ function SkfGenericConstruct(armature) {
   } else {
     armature.cachedBones.sort((a, b) => (a.id > b.id) ? 1 : -1)
   }
-
-  console.log(armature.bones[0].name)
 
   // 1st inheritance pass 
   resetInheritance(armature.cachedBones, armature.bones);
